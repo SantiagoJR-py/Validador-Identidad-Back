@@ -1,0 +1,18 @@
+services:
+  ids:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      # MySQL runs on the host; adjust if it lives elsewhere.
+      IDS_DATABASE_URL: ${IDS_DOCKER_DATABASE_URL:-mysql+pymysql://santi:CHANGE_ME@host.docker.internal:3306/validation_identity?charset=utf8mb4}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ids-data:/service/backend/data
+    restart: unless-stopped
+volumes:
+  ids-data:
