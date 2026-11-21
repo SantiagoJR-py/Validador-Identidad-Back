@@ -16,7 +16,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 def ready(tmp_path, monkeypatch):
     monkeypatch.setenv('IDS_HOST_API_KEY', 'test-host-secret-abcdefghijklmnopqrstuvwxyz')
     monkeypatch.setenv('IDS_SIGNING_KEY', 'test-signing-secret-abcdefghijklmnopqrstuvwxyz')
-    monkeypatch.setenv('IDS_ALLOWED_ORIGINS', 'http://localhost:8080')
     monkeypatch.setenv('IDS_DATABASE_URL', 'sqlite:///' + str(tmp_path / 'test.sqlite3'))
     import backend.app.main as m
     m = importlib.reload(m)
@@ -44,10 +43,11 @@ def fixture_image():
 def test_session_auth_and_embed_headers(ready):
     m,c=ready
     assert c.post('/api/v1/host/sessions',json={'parent_origin':'http://localhost:8080'}).status_code==401
-    assert c.post('/api/v1/host/sessions',headers={'X-API-Key':'test-host-secret-abcdefghijklmnopqrstuvwxyz'},json={'parent_origin':'https://evil.example'}).status_code==403
+    assert c.post('/api/v1/host/sessions',headers={'X-API-Key':'test-host-secret-abcdefghijklmnopqrstuvwxyz'},json={'parent_origin':'https://cualquiera.example'}).status_code==200
+    assert c.post('/api/v1/host/sessions',headers={'X-API-Key':'test-host-secret-abcdefghijklmnopqrstuvwxyz'},json={'parent_origin':'no-es-un-origen'}).status_code==422
     s=session(c)
     assert c.get('/api/v1/embed/session',headers={'Authorization':'Bearer '+s['token']}).json()['parent_origin']=='http://localhost:8080'
-    assert 'frame-ancestors' in c.get('/embed/').headers['content-security-policy']
+    assert 'frame-ancestors *' in c.get('/embed/').headers['content-security-policy']
     assert c.get('/api/v1/embed/session',headers={'Authorization':'Bearer '+'invalid'}).status_code==401
     assert m.verify_token(s['token'])['sid']==s['session_id']
 

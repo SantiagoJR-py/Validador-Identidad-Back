@@ -1,7 +1,8 @@
 """Standalone, embeddable Colombian ID OCR MVP.
 
-The embed token is short-lived and bound to one allowed parent origin. The server
-never trusts client-supplied origin values when delivering postMessage events.
+The embed token is short-lived and bound to the parent origin declared when the
+session was created. Any origin may embed the iframe; access is gated only by the
+host API key (session creation) and the signed session token.
 """
 from __future__ import annotations
 
@@ -41,7 +42,6 @@ FRONTEND = ROOT / 'frontend'
 DATABASE_URL = os.getenv('IDS_DATABASE_URL', 'mysql+pymysql://santi:123@127.0.0.1:3306/validation_identity?charset=utf8mb4')
 API_KEY = os.getenv('IDS_HOST_API_KEY', '')
 SIGNING_KEY = os.getenv('IDS_SIGNING_KEY', '')
-ALLOWED_ORIGINS = [x.strip().rstrip('/') for x in os.getenv('IDS_ALLOWED_ORIGINS', 'http://localhost:4200,http://localhost:8080').split(',') if x.strip()]
 MAX_BYTES = int(os.getenv('IDS_MAX_IMAGE_BYTES', str(8 * 1024 * 1024)))
 RESULT_TTL = int(os.getenv('IDS_RESULT_TTL_SECONDS', '900'))
 SESSION_TTL = min(900, int(os.getenv('IDS_SESSION_TTL_SECONDS', '600')))
@@ -180,7 +180,7 @@ def verify_token(token: str):
         if not hmac.compare_digest(signature, expected):
             raise ValueError('signature')
         data = json.loads(b64ud(payload))
-        if data['exp'] < int(time.time()) or data['origin'] not in ALLOWED_ORIGINS or not re.fullmatch('[a-f0-9]{32}', data['sid']):
+        if data['exp'] < int(time.time()) or not re.fullmatch('[a-f0-9]{32}', data['sid']):
             raise ValueError('expired/origin/session')
         return data
     except (ValueError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
@@ -232,17 +232,13 @@ def init_ocr():
 async def lifespan(app: FastAPI):
     if not API_KEY or len(API_KEY) < 24 or not SIGNING_KEY or len(SIGNING_KEY) < 32:
         raise RuntimeError('Set secure IDS_HOST_API_KEY (>=24 chars) and IDS_SIGNING_KEY (>=32 chars)')
-    for origin in ALLOWED_ORIGINS:
-        p = urlparse(origin)
-        if p.scheme not in ('https', 'http') or not p.netloc or (p.scheme == 'http' and p.hostname not in ('localhost', '127.0.0.1')):
-            raise RuntimeError('Allowed origins must be HTTPS or localhost HTTP')
     setup_db()
     init_ocr()
     yield
 
 
 app = FastAPI(title='Identity Document Scanner API', version='0.1.0', lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=False,
+app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=False,
                    allow_methods=['GET', 'POST'], allow_headers=['Authorization', 'Content-Type', 'X-API-Key'])
 
 
@@ -254,11 +250,10 @@ async def security_headers(request: Request, call_next):
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['Permissions-Policy'] = 'camera=(self), microphone=()'
     if request.url.path.startswith('/embed'):
-        # Browser enforces this; server sets only allowlisted ancestor origins.
-        ancestors = ' '.join(ALLOWED_ORIGINS)
+        # Any site may embed the scanner iframe.
         response.headers['Content-Security-Policy'] = ("default-src 'self'; img-src 'self' blob: data:; "
             "script-src 'self'; style-src 'self'; connect-src 'self'; "
-            f"frame-ancestors 'self' {ancestors}; base-uri 'none'; form-action 'none'")
+            "frame-ancestors *; base-uri 'none'; form-action 'none'")
     else:
         response.headers['Content-Security-Policy'] = "frame-ancestors 'none'"
     return response
@@ -273,8 +268,10 @@ def health():
 def create_session(body: SessionRequest, x_api_key: str | None = Header(default=None)):
     require_host(x_api_key)
     origin = body.parent_origin.rstrip('/')
-    if origin not in ALLOWED_ORIGINS:
-        raise HTTPException(403, 'Parent origin not allowed')
+    p = urlparse(origin)
+    if p.scheme not in ('https', 'http') or not p.netloc or p.path or p.query or p.fragment:
+        # Only format is checked: the value is used as postMessage targetOrigin.
+        raise HTTPException(422, 'parent_origin must be an origin like https://app.example.com')
     sid = secrets.token_hex(16)
     exp = int(time.time()) + SESSION_TTL
     token = sign_token({'sid': sid, 'origin': origin, 'exp': exp})

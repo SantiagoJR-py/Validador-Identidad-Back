@@ -8,7 +8,7 @@
 - Evaluación de calidad: iluminación, desenfoque, resolución y posibles brillos; corrección de perspectiva cuando se detecta un cuadrilátero.
 - OCR local con PaddleOCR 3.x; Tesseract es un fallback **de desarrollo** si PaddleOCR no está disponible.
 - Extracción conservadora de número candidato, nombres candidatos y fechas candidatas; campos dudosos requieren revisión. **No atribuir precisión de producción.**
-- Embed vía iframe con `Content-Security-Policy: frame-ancestors` restringido a orígenes configurados; CORS también restrictivo.
+- Embed vía iframe desde cualquier origen (`frame-ancestors *`, CORS abierto). El acceso se controla con la API key del anfitrión y el token firmado de sesión.
 - Sesiones cortas firmadas con HMAC vinculadas al origen exacto del host; API key sólo en backend anfitrión.
 - Eventos de progreso y finalización vía `window.postMessage` con `targetOrigin` exacto; servidor host puede consultar eventos y resultado vía API privada.
 - Base de datos MySQL/MariaDB (`IDS_DATABASE_URL`): `events` (bitácora sin número de documento ni texto OCR), `results` (copia cifrada temporal, TTL 15 min) e `identity_records` (un registro por persona con datos extraídos y JSON completo).
@@ -43,7 +43,7 @@ Antes de arrancar, crea la base y el usuario con `sudo mysql < backend/setup_mys
 
 ## Ejemplo de integración con otra app
 
-1. El backend anfitrión realiza `POST /api/v1/host/sessions` con header `X-API-Key` y JSON `{"parent_origin":"https://app.example.com"}`. El origen debe figurar exactamente en `IDS_ALLOWED_ORIGINS`.
+1. El backend anfitrión realiza `POST /api/v1/host/sessions` con header `X-API-Key` y JSON `{"parent_origin":"https://app.example.com"}`. Se acepta cualquier origen bien formado; se usa como `targetOrigin` de `postMessage`.
 2. El backend anfitrión devuelve al frontend sólo `embed_path` y `session_id`, nunca su API key. El token viaja en el fragmento de URL, que no se envía al servidor web. El navegador renderiza `<iframe src="https://ids.example.com{embed_path}" allow="camera"></iframe>`.
 3. En el frontend anfitrión, escucha `message` validando **`event.origin === "https://ids.example.com"`**, `event.source === iframe.contentWindow`, `event.data.source === "IDS"` y el `sessionId` esperado.
 4. Tipos de mensaje: `IDS_READY`, `IDS_CAPTURE_STARTED`, `IDS_SIDE_PROCESSED`, `IDS_ERROR`, `IDS_COMPLETE`. `IDS_COMPLETE` contiene datos extraídos, que son sensibles: manejarlos con autorización y sin imprimirlos en consola.
